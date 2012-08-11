@@ -10,12 +10,15 @@ var argv = require('optimist').argv,
 var entries = []
 	,visited = {}
 	,ext = argv.extension || 'jpg'
-	,tag = argv.tag || 'a'
-	,attr = argv.attr || 'href'
+	,tag = argv.tag || 'img'
+	,attr = argv.attr || 'src'
 	,recurse = argv.recurse || 0
-	,baseURL = argv.url || 'http://google.com'
-	,dir = argv.path || __dirname+'/data';
+	,baseURL = argv.url || 'http://www.flickr.com/explore'
+	,dir = argv.path || __dirname+'/data'
+	,reset = argv.reset || true;
 
+if( reset )
+	wrench.rmdirSyncRecursive(dir);
 if( !fs.existsSync(dir) )
 	wrench.mkdirSyncRecursive(dir,'0777');
 console.log("going for "+baseURL+" to find all *."+ext+" files and saving them to "+dir);
@@ -26,24 +29,37 @@ function go(link,callback,level) {
 			visited[link] = true;
 			var links = jquery(body).find(tag+'['+attr+'$=".'+ext+'"]').get();
 			console.log(link + ' received: '+body.length + ' bytes with '+links.length+' matches');
-			async.forEachSeries(links,function(e,done){
+			async.forEachLimit(links,3,function(e,done){
 				var target = jquery(e).attr(attr);
+				if( /^\//.test(target) )
+					target = baseURL + target;
 				if( !visited[target] ) {
 					visited[target] = true;
-					console.log("requesting "+target); 
-					var r = request(target).pipe(fs.createWriteStream(dir+'/'+path.basename(target)));
-					r.on('end', function () {
-						console.log('finished '+target);
-						done();
+					var basename = path.basename(target);
+					var fullfile = dir+'/'+ basename;
+					console.log("requesting "+basename);
+					//pipe(fs.createWriteStream(fullfile));
+					request({uri:target,encoding:null,output: "buffer"},function(error, response, body){
+						if( !error && response.statusCode === 200 && body instanceof Buffer ) {
+							console.log("received "+basename+", length:"+body.length+", is buffer:"+(body instanceof Buffer));
+							fs.writeFile(fullfile,body,function(err) {
+								console.log("written "+basename+" to "+fullfile);
+								done(err);
+							});
+						}
+						else {
+							console.error(response.statusCode+" error with "+basename+":"+error);
+							done(error);
+						}
 					});
-				}
+				} else done();
 			},function() {
 				if( recurse > level ) {
 					var otherLinks = jquery(body).find('a[href^="'+baseURL+'"]');
 					otherLinks.each(function(index,otherLink){
 						var a = jquery(otherLink).attr('href');
 						if( !visited[a] )
-							go(a,visited,function(){
+							go(a,function(){
 								callback();
 							},level++);
 					});
