@@ -18,7 +18,7 @@ var entries = []
 	,reset = argv.reset || true;
 
 if( reset )
-	wrench.rmdirSyncRecursive(dir);
+	wrench.rmdirSyncRecursive(dir,true);
 if( !fs.existsSync(dir) )
 	wrench.mkdirSyncRecursive(dir,'0777');
 console.log("going for "+baseURL+" to find all *."+ext+" files and saving them to "+dir);
