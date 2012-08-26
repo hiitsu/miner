@@ -1,7 +1,7 @@
 {
   "name": "miner",
   "version": "0.0.1",
-  "description": "tiny, jquery selector based, recursive web site miner",
+  "description": "tiny dumb jquery selector based recursive web miner",
   "main": "miner.js",
   "scripts": {
     "test": "node miner.js"
@@ -21,7 +21,6 @@
     "jquery": "~1.7.3",
     "optimist": "~0.3.4",
     "request": "~2.10.0",
-    "slugs": "~0.1.2",
     "wrench": "~1.3.9"
   },
   "devDependencies": {}

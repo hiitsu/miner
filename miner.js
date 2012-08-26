@@ -1,74 +1,144 @@
-var argv = require('optimist').argv,
+var argv = require('optimist')
+		.string('url','tag','attr','extension','path')
+		.argv,
 	jquery = require('jquery'),
 	request = require('request'),
 	async = require('async'),
 	fs = require('fs'),
 	wrench = require('wrench'),
 	path = require('path'),
-	slugs = require("slugs");
+	url = require('url');
 	
-var entries = []
+var downloaded = {}
 	,visited = {}
 	,ext = argv.extension || 'jpg'
 	,tag = argv.tag || 'img'
 	,attr = argv.attr || 'src'
 	,recurse = argv.recurse || 0
-	,baseURL = argv.url || 'http://www.flickr.com/explore'
+	,startURL = argv.url || 'http://www.flickr.com/explore'
+	,parsedURL = url.parse(startURL)
 	,dir = argv.path || __dirname+'/data'
-	,reset = argv.reset || true;
+	,reset = argv.reset || true
+	,serverBase = parsedURL.protocol+'//'+parsedURL.host;
+
+function relativeBase(s) {
+	var o = url.parse(s),
+		d = /\/$/.test(o.path) ? o.path : path.dirname(o.path);
+	return o.protocol+'//'+o.host+d;
+}
 
 if( reset )
 	wrench.rmdirSyncRecursive(dir,true);
 if( !fs.existsSync(dir) )
 	wrench.mkdirSyncRecursive(dir,'0777');
-console.log("going for "+baseURL+" to find all *."+ext+" files and saving them to "+dir);
+console.log("going for "+startURL+" to find all *."+ext+" files and saving them to "+dir);
+
+function isWorkable(s) {
+	if( s.substring(0,1) === '#')
+		return false;
+	if( /^javacript:/.test(s) || /^mailto:/.test(s) )
+		return false;
+	return true;
+}
+function normalize(link,s) {
+	var normalized = s;
+	if( s.substring(0,1) === '/' )
+		normalized = serverBase + s;
+	else if( s.substring(0,4).toLocaleLowerCase() !== 'http' )
+		normalized = relativeBase(link) + s;
+	return normalized;
+}
+
+function findLinks(link,body) {
+	var a = [];
+	var b = jquery(body).find('a');
+	b.each(function(index,e){
+		var c = jquery(e).attr('href').trim();
+		if( isWorkable(c) ) {
+			var normalized = normalize(link,c);
+			if( !visited[normalized] )
+				a.push(normalized);
+		}
+	});
+	console.log(link + ' has links ' +a);
+	return a;
+}
+
+function findTargets(link,body) {
+	var a = [], s = tag+'['+attr+'$=".'+ext+'"]';
+	try {
+		var b = jquery(body).find(s);
+	} catch(E) {
+		console.error(E);
+		console.error(s);
+		return a;
+	}
+	b.each(function(index,e){
+		var c = jquery(e).attr(attr).trim();
+		if( isWorkable(c) ) {
+			var normalized = normalize(link,c);
+			if( !downloaded[normalized] )
+				a.push(normalized);
+		}
+	});
+	console.log(link + ' has targets:');
+	console.log(a);
+	return a;
+}
+
+function write(uri,basename,fullfile,cb) {
+	request({uri:uri,encoding:null,output: "buffer"},function(error, response, body){
+		if( !error && response && response.statusCode === 200 && body instanceof Buffer ) {
+			console.log("received "+basename+", length:"+body.length+", is buffer:"+(body instanceof Buffer));
+			fs.writeFile(fullfile,body,function(err) {
+				console.log("written "+basename+" to "+fullfile);
+				cb(err);
+			});
+		}
+		else {
+			console.error("error with "+basename);
+			console.error(error);
+			cb(error);
+		}
+	});
+}
 
 function go(link,callback,level) {
 	if( !visited[link] ) {
 		request(link, function (error, response, body) {
+			if( error ) {
+				console.error(error);
+				return callback();
+			}
 			visited[link] = true;
-			var links = jquery(body).find(tag+'['+attr+'$=".'+ext+'"]').get();
-			console.log(link + ' received: '+body.length + ' bytes with '+links.length+' matches');
-			async.forEachLimit(links,3,function(e,done){
-				var target = jquery(e).attr(attr);
-				if( /^\//.test(target) )
-					target = baseURL + target;
-				if( !visited[target] ) {
-					visited[target] = true;
+			var targets = findTargets(link,body);
+			console.log(link + ' has '+targets.length+' targets.');
+			async.forEachLimit(targets,2,function(target,done){
+				if( !downloaded[target] ) {
+					downloaded[target] = true;
 					var basename = path.basename(target);
 					var fullfile = dir+'/'+ basename;
 					console.log("requesting "+basename);
-					//pipe(fs.createWriteStream(fullfile));
-					request({uri:target,encoding:null,output: "buffer"},function(error, response, body){
-						if( !error && response.statusCode === 200 && body instanceof Buffer ) {
-							console.log("received "+basename+", length:"+body.length+", is buffer:"+(body instanceof Buffer));
-							fs.writeFile(fullfile,body,function(err) {
-								console.log("written "+basename+" to "+fullfile);
-								done(err);
-							});
-						}
-						else {
-							console.error(response.statusCode+" error with "+basename+":"+error);
-							done(error);
-						}
-					});
+					write(target,basename,fullfile,function(error) { done(error); });
 				} else done();
 			},function() {
 				if( recurse > level ) {
-					var otherLinks = jquery(body).find('a[href^="'+baseURL+'"]');
-					otherLinks.each(function(index,otherLink){
-						var a = jquery(otherLink).attr('href');
-						if( !visited[a] )
-							go(a,function(){
-								callback();
-							},level++);
+					var b = findLinks(link,body);
+					async.forEachLimit(b,2,function(recurseLink,done2){
+						go(recurseLink,function() {
+							done2();
+						},level++);
+					},function() {
+						callback();
 					});
-				}
+				} else return callback();
 			});
 		});
 	} else return callback();
 }
 
-go(baseURL,function(){
+go(startURL,function(){
+	console.log('Visited:');
+	console.log(Object.keys(visited));
 	console.log('done!');
 },0);
